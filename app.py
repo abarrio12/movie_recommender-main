@@ -1,8 +1,8 @@
 """
-Aplicación Flask del recomendador de películas.
+Flask app for the movie recommender.
 
-Carga el modelo generado por analysis.ipynb (model.pkl y similarity.pkl) y muestra
-las películas más parecidas a la que elija el usuario, con sus pósters de TMDB.
+Loads the model produced by analysis.ipynb (model.pkl and similarity.pkl) and shows
+the movies most similar to the one the user picks, with their TMDB posters.
 """
 import logging
 import os
@@ -20,48 +20,55 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Configuración
+# Configuration
 # ---------------------------------------------------------------------------
 
+# The TMDB API key is read from the TMDB_API_KEY environment variable:
+#     export TMDB_API_KEY="your_key"                      (locally)
+#     docker run -e TMDB_API_KEY="your_key" ...           (in Docker)
+# If it isn't set, the key provided with the course template is used as a fallback.
+# WHY an environment variable: keys should not live in code that is pushed to GitHub.
+# The fallback is only acceptable here because that key is already public in the
+# course repository; never hard-code a personal or paid key like this.
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "390e76286265f7638bb6b19d86474639")
 if not TMDB_API_KEY:
-    log.warning("TMDB_API_KEY no está definida: se mostrarán las películas sin póster.")
+    log.warning("TMDB_API_KEY is not set: movies will be shown without posters.")
 
 N_RECOMMENDATIONS = 20
 POSTER_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
-# CAMBIO: rutas absolutas basadas en la carpeta de este archivo.
-# POR QUÉ: con rutas relativas ('model.pkl') la app solo funciona si se arranca
-# desde la carpeta del proyecto; así funciona se lance desde donde se lance.
+# CHANGE: absolute paths based on this file's folder.
+# WHY: with relative paths ('model.pkl') the app only works when started from the
+# project folder; this way it works wherever it is launched from.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ---------------------------------------------------------------------------
-# Carga del modelo
+# Model loading
 # ---------------------------------------------------------------------------
 
-# CAMBIO: se usa `with open(...)` en lugar de pickle.load(open(...)).
-# POR QUÉ: `with` cierra el archivo al terminar; la versión anterior lo dejaba abierto.
+# CHANGE: `with open(...)` instead of pickle.load(open(...)).
+# WHY: `with` closes the file when done; the previous version left it open.
 with open(os.path.join(BASE_DIR, "model.pkl"), "rb") as f:
     movies = pickle.load(f)
 with open(os.path.join(BASE_DIR, "similarity.pkl"), "rb") as f:
     similarity = pickle.load(f)
 
-# CAMBIO: reset_index + comprobación de tamaños.
-# POR QUÉ: la matriz de similitud se indexa por POSICIÓN (fila 0, 1, 2…). Si el índice
-# del DataFrame tiene huecos (como pasaba tras el dropna del notebook original),
-# la película buscada y su fila en la matriz no coinciden y las recomendaciones
-# salen de otra película. El notebook ya lo corrige, pero lo repetimos aquí por
-# seguridad, y comprobamos que ambos archivos corresponden al mismo modelo.
+# CHANGE: reset_index + size check.
+# WHY: the similarity matrix is indexed by POSITION (row 0, 1, 2...). If the DataFrame
+# index has gaps (as it did after the dropna in the original notebook), the selected
+# movie and its row in the matrix don't match, and the recommendations come from a
+# different movie. The notebook already fixes this, but we repeat it here to be safe,
+# and we check that both files belong to the same model.
 movies = movies.reset_index(drop=True)
 if similarity.shape != (len(movies), len(movies)):
     raise RuntimeError(
-        f"model.pkl ({len(movies)} películas) y similarity.pkl {similarity.shape} "
-        "no coinciden. Vuelve a ejecutar analysis.ipynb para regenerar ambos."
+        f"model.pkl ({len(movies)} movies) and similarity.pkl {similarity.shape} "
+        "don't match. Re-run analysis.ipynb to regenerate both."
     )
 
-# CAMBIO: el desplegable usa el ID de TMDB como valor, y muestra "Título (año)".
-# POR QUÉ: hay títulos repetidos que son películas distintas (Batman de 1966 y de 1989).
-# Buscando por título siempre se elegía la primera; con el ID no hay ambigüedad.
+# CHANGE: the dropdown uses the TMDB ID as its value and shows "Title (year)".
+# WHY: some titles are shared by different movies (Batman from 1966 and 1989).
+# Looking up by title always picked the first one; with the ID there's no ambiguity.
 id_to_position = pd.Series(movies.index, index=movies["id"])
 
 
@@ -75,70 +82,69 @@ movie_options = [
 ]
 
 # ---------------------------------------------------------------------------
-# Pósters
+# Posters
 # ---------------------------------------------------------------------------
 
-# CAMBIO: una única sesión HTTP reutilizada.
-# POR QUÉ: reutiliza la conexión con TMDB en lugar de abrir una nueva en cada petición.
+# CHANGE: a single reused HTTP session.
+# WHY: it reuses the connection to TMDB instead of opening a new one for every request.
 http = requests.Session()
 
 
-# CAMBIO: caché de pósters.
-# POR QUÉ: el póster de una película no cambia; si ya lo pedimos una vez, no hace falta
-# volver a llamar a la API. Las películas populares salen en muchas recomendaciones.
-# lru_cache no guarda las llamadas que lanzan una excepción, así que un fallo de red
-# puntual no deja la película sin póster para siempre.
+# CHANGE: poster cache.
+# WHY: a movie's poster doesn't change; once we've fetched it there's no need to call
+# the API again. Popular movies show up in many recommendation lists.
+# lru_cache does not store calls that raise an exception, so a one-off network
+# failure doesn't leave the movie without a poster forever.
 @lru_cache(maxsize=4096)
 def _poster_url(movie_id):
     response = http.get(
         f"https://api.themoviedb.org/3/movie/{movie_id}",
         params={"api_key": TMDB_API_KEY, "language": "en-US"},
-        # CAMBIO: timeout. POR QUÉ: sin él, si TMDB no responde la página se queda
-        # colgada indefinidamente.
+        # CHANGE: timeout. WHY: without it, if TMDB doesn't respond the page hangs forever.
         timeout=5,
     )
     response.raise_for_status()
-    # CAMBIO: .get() en lugar de ['poster_path'].
-    # POR QUÉ: algunas películas no tienen póster (poster_path es None) y la versión
-    # anterior fallaba al sumar un texto con None, rompiendo toda la página.
+    # CHANGE: .get() instead of ['poster_path'].
+    # WHY: some movies have no poster (poster_path is None), and the previous version
+    # crashed when adding a string to None, breaking the whole page.
     poster_path = response.json().get("poster_path")
     return f"{POSTER_BASE_URL}{poster_path}" if poster_path else None
 
 
 def fetch_poster(movie_id):
-    """Devuelve la URL del póster, o None si no hay clave, no hay póster o falla la API.
-    La plantilla muestra un recuadro con el título cuando recibe None."""
+    """Return the poster URL, or None if there's no key, no poster or the API fails.
+    The template shows a box with the title when it receives None."""
     if not TMDB_API_KEY:
         return None
     try:
         return _poster_url(int(movie_id))
     except requests.RequestException as error:
-        # Se registra solo el tipo de error y el código HTTP, no el mensaje completo:
-        # ese mensaje incluye la URL, y la URL incluye la API key.
+        # Only the error type and HTTP status are logged, not the full message:
+        # that message contains the URL, and the URL contains the API key.
         status = getattr(error.response, "status_code", None)
-        log.warning("No se pudo obtener el póster de %s (%s, HTTP %s)",
+        log.warning("Could not fetch the poster for %s (%s, HTTP %s)",
                     movie_id, type(error).__name__, status)
         return None
 
 
-# CAMBIO: los pósters se piden en paralelo (hasta 8 a la vez).
-# POR QUÉ: antes se hacían 20 peticiones una detrás de otra; si cada una tarda
-# 0,3 s, la página tardaba ~6 s. En paralelo tarda lo que la más lenta.
+# CHANGE: posters are fetched in parallel (up to 8 at a time).
+# WHY: previously 20 requests were made one after another; at ~0.3 s each, the page
+# took ~6 s. In parallel it takes as long as the slowest one.
 poster_pool = ThreadPoolExecutor(max_workers=8)
 
 # ---------------------------------------------------------------------------
-# Recomendaciones
+# Recommendations
 # ---------------------------------------------------------------------------
 
 
 def get_recommendations(position, n=N_RECOMMENDATIONS):
-    """Devuelve las n películas más parecidas a la película en `position`."""
+    """Return the n movies most similar to the movie at `position`."""
     scores = similarity[position]
 
-    # CAMBIO: argpartition + argsort en lugar de ordenar las ~4800 películas.
-    # POR QUÉ: solo necesitamos las n mejores. argpartition las separa sin ordenar
-    # todo (más rápido) y luego ordenamos solo esas. Pedimos n + 1 porque la
-    # película más parecida es ella misma, que después quitamos.
+    # CHANGE: argpartition + argsort instead of sorting all ~4800 movies.
+    # WHY: we only need the top n. argpartition separates them without sorting
+    # everything (faster), and then we sort only those. We take n + 1 because the
+    # most similar movie is the movie itself, which we then remove.
     candidates = np.argpartition(-scores, n + 1)[: n + 1]
     candidates = candidates[np.argsort(-scores[candidates])]
     top = [i for i in candidates if i != position][:n]
@@ -152,7 +158,7 @@ def get_recommendations(position, n=N_RECOMMENDATIONS):
 
 
 # ---------------------------------------------------------------------------
-# Rutas
+# Routes
 # ---------------------------------------------------------------------------
 
 
@@ -161,17 +167,16 @@ def home():
     return render_template("index.html", movie_options=movie_options)
 
 
-# CAMBIO: la ruta acepta también GET.
-# POR QUÉ: con solo POST, recargar la página de resultados muestra el aviso de
-# "reenviar formulario". Con GET, la URL (/recommend?selected_movie=19995) se puede
-# recargar, guardar o compartir.
+# CHANGE: the route also accepts GET.
+# WHY: with POST only, reloading the results page shows the "resubmit form" warning.
+# With GET, the URL (/recommend?selected_movie=19995) can be reloaded, bookmarked or shared.
 @app.route("/recommend", methods=["GET", "POST"])
 def recommend():
     raw_id = request.values.get("selected_movie", "")
 
-    # CAMBIO: validación de la entrada.
-    # POR QUÉ: antes, un valor que no existiera provocaba un IndexError y un error 500.
-    # Ahora se muestra un mensaje claro y la página sigue funcionando.
+    # CHANGE: input validation.
+    # WHY: previously, a value that didn't exist caused an IndexError and a 500 error.
+    # Now a clear message is shown and the page keeps working.
     try:
         selected_id = int(raw_id)
         position = int(id_to_position[selected_id])
@@ -192,11 +197,11 @@ def recommend():
 
 
 if __name__ == "__main__":
-    # CAMBIO: debug desactivado por defecto.
-    # POR QUÉ: el modo debug muestra el código y permite ejecutar Python desde el
-    # navegador si hay un error; nunca debe estar activo en un servidor público.
-    # Para desarrollar en local: FLASK_DEBUG=1 python app.py
-    # En Docker la app no se arranca desde aquí, sino con gunicorn (ver Dockerfile).
+    # CHANGE: debug is off by default.
+    # WHY: debug mode shows the source code and lets anyone run Python from the browser
+    # when an error occurs; it must never be enabled on a public server.
+    # For local development: FLASK_DEBUG=1 python app.py
+    # In Docker the app isn't started from here but with gunicorn (see Dockerfile).
     app.run(
         host="0.0.0.0",
         port=int(os.environ.get("PORT", 5000)),

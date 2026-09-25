@@ -1,4 +1,4 @@
-# Archivos que Docker no debe enviar al build (no los necesita la app)
+# Files Docker should not send to the build (the app doesn't need them)
 .git
 .gitignore
 .ipynb_checkpoints
