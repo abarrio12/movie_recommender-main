@@ -11,3 +11,6 @@ gunicorn==23.0.0
 # Needed by the notebook (PorterStemmer). The app doesn't use it, but this way
 # a single `pip install -r requirements.txt` covers the whole project.
 nltk==3.9.1
+
+# Uses the operating system's certificate store for HTTPS (fixes SSL errors behind antivirus/proxies)
+truststore>=0.10
