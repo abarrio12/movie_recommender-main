@@ -1,0 +1,11 @@
+# Archivos que Docker no debe enviar al build (no los necesita la app)
+.git
+.gitignore
+.ipynb_checkpoints
+__pycache__
+*.pyc
+*.ipynb
+data/
+.env
+venv/
+.venv/
