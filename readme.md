@@ -18,47 +18,119 @@ movie-recommender/
 ├── requirements.txt
 ├── Dockerfile
 ├── .dockerignore
+├── .gitignore
 ├── templates/
 │   └── index.html
 └── data/
     ├── tmdb_5000_movies.csv
     ├── tmdb_5000_credits.csv
-    └── ml-latest-small/  # MovieLens; downloaded automatically by the notebook
+    └── ml-latest-small/  # MovieLens (bonus); downloaded by the notebook
 ```
+
+## Requirements
+
+- **Python 3.12.** Python 3.10–3.13 should also work, but **3.14 does not**: the pinned
+  versions of pandas, NumPy and scikit-learn have no pre-built packages for it.
+- **Docker Desktop** (only for the Docker option).
 
 ## How to run
 
-### 1. Build the model
+### 1. Create a virtual environment and install the dependencies
 
-```bash
-pip install -r requirements.txt
-jupyter notebook analysis.ipynb     # run all cells
+Windows (PowerShell):
+
+```powershell
+py -3.12 -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m pip install ipykernel      # to run the notebook in VS Code / Jupyter
 ```
 
-This creates `model.pkl` and `similarity.pkl`.
-
-### 2. TMDB API key (for posters)
-
-The app reads the key from the `TMDB_API_KEY` environment variable. If it isn't set, it
-falls back to the key provided with the course template. You can create your own free key at
-<https://www.themoviedb.org/settings/api>. If no key works, the app still runs but shows the
-movies without posters.
-
-### 3a. Locally
+Mac/Linux:
 
 ```bash
-export TMDB_API_KEY="your_key"      # Windows PowerShell: $env:TMDB_API_KEY="your_key"
+python3.12 -m venv venv
+source venv/bin/activate
+python -m pip install -r requirements.txt
+python -m pip install ipykernel
+```
+
+### 2. Build the model
+
+Open `analysis.ipynb`, select the `venv` kernel and run all cells.
+This creates `model.pkl` and `similarity.pkl`.
+
+The notebook downloads MovieLens automatically for the bonus section. If that fails with an
+SSL certificate error (common behind antivirus software or proxies), download
+<https://files.grouplens.org/datasets/movielens/ml-latest-small.zip> manually and unzip it
+into `data/`, so that `data/ml-latest-small/ratings.csv` exists.
+
+> Don't open the CSV files with Excel: saving them from Excel corrupts the long `cast` and
+> `crew` columns. The credits file must have 4803 rows and 4 columns.
+
+### 3a. Run locally
+
+```bash
 python app.py
 ```
 
-### 3b. With Docker
+The terminal should show:
+
+```
+ * Running on http://127.0.0.1:5000
+```
+
+The terminal then stays waiting for requests; this is expected. Open
+**<http://127.0.0.1:5000>** in your browser, pick a movie and click **Get recommendations**.
+Press `Ctrl + C` in the terminal to stop the app.
+
+### 3b. Run with Docker
+
+Build the image (repeat this every time you change any file):
 
 ```bash
 docker build -t movie-recommender .
+```
+
+Run the container:
+
+```bash
+docker run -p 5000:5000 movie-recommender
+```
+
+The app is running when the logs show gunicorn listening on port 5000:
+
+```
+[INFO] Starting gunicorn 23.0.0
+[INFO] Listening at: http://0.0.0.0:5000
+[INFO] Booting worker with pid: ...
+```
+
+Then open **<http://localhost:5000>** in your browser. Use `http://`, not `https://`, and
+don't open the `0.0.0.0` address from the logs: that is the address inside the container.
+Press `Ctrl + C` to stop the container.
+
+## TMDB API key (posters)
+
+Posters are fetched from the TMDB API. The app reads the key from the `TMDB_API_KEY`
+environment variable; if it isn't set, it uses the key provided with the course template,
+so **no setup is needed**.
+
+To use your own free key (from <https://www.themoviedb.org/settings/api>):
+
+```bash
+# Locally (Windows PowerShell)
+$env:TMDB_API_KEY="your_key"
+python app.py
+
+# Docker
 docker run -p 5000:5000 -e TMDB_API_KEY="your_key" movie-recommender
 ```
 
-Then open <http://localhost:5000>.
+If posters can't be fetched, the app still works and shows a grey box with the movie title
+instead. The terminal logs the reason (e.g. `HTTP 401` means the key is no longer valid).
+The app uses `truststore` so that HTTPS works behind antivirus software or proxies that
+intercept certificates.
 
 ## Results
 
@@ -79,7 +151,10 @@ each user's mean rating.
 
 ## Notes
 
-- `similarity.pkl` is ~92 MB: GitHub accepts it (100 MB per-file limit) but shows a warning
-  above 50 MB. If uploading it causes problems, use [Git LFS](https://git-lfs.com/).
-- The `.pkl` files must be generated with the same pandas/numpy versions the app uses
+- **Why `similarity.pkl` is float32:** the similarity matrix has 4800 × 4800 values. Stored as
+  float64 it takes ~185 MB, which exceeds GitHub's 100 MB per-file limit. Saving it as float32
+  halves it to ~92 MB, so it can be pushed to GitHub, and the lost precision doesn't change the
+  order of the recommendations. GitHub still shows a warning for files above 50 MB; this is
+  expected.
+- The `.pkl` files must be generated with the same pandas/NumPy versions the app uses
   (those in `requirements.txt`); otherwise they may fail to load inside Docker.
