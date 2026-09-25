@@ -15,6 +15,10 @@ import pandas as pd
 import requests
 from flask import Flask, render_template, request
 
+import truststore
+truststore.inject_into_ssl()   # use Windows' certificate store (fixes SSL errors behind antivirus/proxies)
+
+
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
